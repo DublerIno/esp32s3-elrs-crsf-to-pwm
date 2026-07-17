@@ -7,6 +7,17 @@ This is meant as a simple(ish) way to take an existing off the shelf already set
 
 The code will run on an ESP32 dev kit board or equivalent (just about any ESP32 variant that has some open UARTs and a open GPIOs to be used for the PWM output)
 
+## Test battery telemetry
+
+The ESP32 sends a CRSF battery sensor frame to the ELRS receiver once per second. The test frame contains random values in these ranges:
+
+- Voltage: 12.0-16.8 V
+- Current: 0.0-30.0 A
+- Used capacity: 0-3000 mAh
+- Remaining capacity: 0-100%
+
+Connect the receiver TX to GPIO 2, receiver RX to GPIO 1, and connect the grounds. In EdgeTX, use **Discover new sensors** on the model telemetry page to display the values. Replace `SendRandomBatteryTelemetry()` with real voltage and current measurements when testing is complete.
+
 ## References
 https://randomnerdtutorials.com/esp32-pwm-arduino-ide/
 https://www.basicpi.org/2018/03/07/esp32-servo-programming-example/

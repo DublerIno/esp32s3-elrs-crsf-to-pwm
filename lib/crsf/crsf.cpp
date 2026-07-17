@@ -143,7 +143,7 @@ static bool crsf_parse_buffer(uint16_t *values, uint16_t *num_values, uint16_t m
 
 uint8_t crsf_frame_CRC(const crsf_frame_t &frame);
 
-
+/** Configure a POSIX UART for CRSF framing: 8 data bits, no parity, one stop bit. */
 int
 crsf_config(int uart_fd)
 {
@@ -162,7 +162,7 @@ crsf_config(int uart_fd)
  */
 static uint16_t convert_channel_value(unsigned chan_value);
 
-
+/** Append UART data to the parser and return true when a valid RC channel frame is decoded. */
 bool crsf_parse(const uint8_t *frame, unsigned len, uint16_t *values,
 		uint16_t *num_values, uint16_t max_channels)
 {
@@ -202,6 +202,7 @@ bool crsf_parse(const uint8_t *frame, unsigned len, uint16_t *values,
 	return ret;
 }
 
+/** Calculate the CRSF CRC-8/DVB-S2 over a frame's type and payload. */
 uint8_t crsf_frame_CRC(const crsf_frame_t &frame)
 {
 	// CRC includes type and payload
@@ -214,6 +215,7 @@ uint8_t crsf_frame_CRC(const crsf_frame_t &frame)
 	return crc;
 }
 
+/** Convert a raw 11-bit CRSF channel value to a PWM pulse width in microseconds. */
 static uint16_t convert_channel_value(unsigned chan_value)
 {
 	/*
@@ -227,6 +229,7 @@ static uint16_t convert_channel_value(unsigned chan_value)
 	return (scale * chan_value) + offset;
 }
 
+/** Find and validate a complete buffered RC frame, then unpack its channel values. */
 static bool crsf_parse_buffer(uint16_t *values, uint16_t *num_values, uint16_t max_channels)
 {
 	uint8_t *crsf_frame_ptr = (uint8_t *)&crsf_frame;
@@ -363,15 +366,24 @@ static bool crsf_parse_buffer(uint16_t *values, uint16_t *num_values, uint16_t m
 }
 
 /**
- * write an uint8_t value to a buffer at a given offset and increment the offset
+ * Telemetry UART interfaces
+ *
+ * The original telemetry functions below use a POSIX UART file descriptor and
+ * the write() system call. That interface is intended for operating systems
+ * where a serial port is opened as a file and represented by an integer fd.
+ *
+ * This ESP32 project uses the Arduino HardwareSerial interface instead. It
+ * calls crsf_build_telemetry_battery() to encode the CRSF frame, then transmits
+ * the returned bytes with Serial2.write(). Keeping frame construction separate
+ * allows the same CRSF encoder to work with both UART interfaces.
  */
+
+/** Append an 8-bit value and advance the output-buffer offset. */
 static inline void write_uint8_t(uint8_t *buf, int &offset, uint8_t value)
 {
 	buf[offset++] = value;
 }
-/**
- * write an uint16_t value to a buffer at a given offset and increment the offset
- */
+/** Append a big-endian 16-bit value and advance the output-buffer offset. */
 static inline void write_uint16_t(uint8_t *buf, int &offset, uint16_t value)
 {
 	// Big endian
@@ -379,9 +391,7 @@ static inline void write_uint16_t(uint8_t *buf, int &offset, uint16_t value)
 	buf[offset + 1] = value & 0xff;
 	offset += 2;
 }
-/**
- * write an uint24_t value to a buffer at a given offset and increment the offset
- */
+/** Append the lower 24 bits of a value in big-endian order. */
 static inline void write_uint24_t(uint8_t *buf, int &offset, int value)
 {
 	// Big endian
@@ -391,9 +401,7 @@ static inline void write_uint24_t(uint8_t *buf, int &offset, int value)
 	offset += 3;
 }
 
-/**
- * write an int32_t value to a buffer at a given offset and increment the offset
- */
+/** Append a signed 32-bit value in big-endian order. */
 static inline void write_int32_t(uint8_t *buf, int &offset, int32_t value)
 {
 	// Big endian
@@ -404,12 +412,15 @@ static inline void write_int32_t(uint8_t *buf, int &offset, int32_t value)
 	offset += 4;
 }
 
+/** Write the CRSF sync byte, encoded frame length, and frame type. */
 static inline void write_frame_header(uint8_t *buf, int &offset, crsf_frame_type_t type, uint8_t payload_size)
 {
 	write_uint8_t(buf, offset, CRSF_SYNC_BYTE); // this got changed from the address to the sync byte
 	write_uint8_t(buf, offset, payload_size + 2);
 	write_uint8_t(buf, offset, (uint8_t)type);
 }
+
+/** Calculate and append the CRC covering the frame type and payload. */
 static inline void write_frame_crc(uint8_t *buf, int &offset, int buf_size)
 {
 	// CRC does not include the address and length
@@ -419,19 +430,35 @@ static inline void write_frame_crc(uint8_t *buf, int &offset, int buf_size)
 	//if (buf_size != offset) { PX4_ERR("frame size mismatch (%i != %i)", buf_size, offset); }
 }
 
+/** Build and write a battery telemetry frame to a POSIX UART. */
 bool crsf_send_telemetry_battery(int uart_fd, uint16_t voltage, uint16_t current, int fuel, uint8_t remaining)
 {
 	uint8_t buf[(uint8_t)crsf_payload_size_t::battery_sensor + 4];
+	const size_t frame_length = crsf_build_telemetry_battery(buf, sizeof(buf), voltage, current, fuel, remaining);
+	return frame_length > 0 && write(uart_fd, buf, frame_length) == (ssize_t)frame_length;
+}
+
+/** Encode voltage, current, used capacity, and remaining charge as a CRSF battery frame. */
+size_t crsf_build_telemetry_battery(uint8_t *buf, size_t buffer_size,
+					 uint16_t voltage, uint16_t current, int fuel, uint8_t remaining)
+{
+	constexpr size_t frame_size = (uint8_t)crsf_payload_size_t::battery_sensor + 4;
+
+	if (buf == nullptr || buffer_size < frame_size) {
+		return 0;
+	}
+
 	int offset = 0;
 	write_frame_header(buf, offset, crsf_frame_type_t::battery_sensor, (uint8_t)crsf_payload_size_t::battery_sensor);
 	write_uint16_t(buf, offset, voltage);
 	write_uint16_t(buf, offset, current);
 	write_uint24_t(buf, offset, fuel);
 	write_uint8_t(buf, offset, remaining);
-	write_frame_crc(buf, offset, sizeof(buf));
-	return write(uart_fd, buf, offset) == offset;
+	write_frame_crc(buf, offset, frame_size);
+	return offset;
 }
 
+/** Build and write a GPS telemetry frame to a POSIX UART. */
 bool crsf_send_telemetry_gps(int uart_fd, int32_t latitude, int32_t longitude, uint16_t groundspeed,
 			     uint16_t gps_heading, uint16_t altitude, uint8_t num_satellites)
 {
@@ -448,6 +475,7 @@ bool crsf_send_telemetry_gps(int uart_fd, int32_t latitude, int32_t longitude, u
 	return write(uart_fd, buf, offset) == offset;
 }
 
+/** Build and write pitch, roll, and yaw telemetry to a POSIX UART. */
 bool crsf_send_telemetry_attitude(int uart_fd, int16_t pitch, int16_t roll, int16_t yaw)
 {
 	uint8_t buf[(uint8_t)crsf_payload_size_t::attitude + 4];
@@ -460,6 +488,7 @@ bool crsf_send_telemetry_attitude(int uart_fd, int16_t pitch, int16_t roll, int1
 	return write(uart_fd, buf, offset) == offset;
 }
 
+/** Build and write a null-terminated flight-mode name to a POSIX UART. */
 bool crsf_send_telemetry_flight_mode(int uart_fd, const char *flight_mode)
 {
 	const int max_length = 16;

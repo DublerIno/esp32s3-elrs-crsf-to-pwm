@@ -44,6 +44,7 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include "../defines.h"
 
@@ -98,6 +99,19 @@ bool	crsf_parse(const uint8_t *frame, unsigned len, uint16_t *values,
  * @return true on success
  */
 bool crsf_send_telemetry_battery(int uart_fd, uint16_t voltage, uint16_t current, int fuel, uint8_t remaining);
+
+/**
+ * Build a CRSF battery telemetry frame for transmission by the caller.
+ * @param buffer destination buffer (must hold at least 12 bytes)
+ * @param buffer_size destination buffer size
+ * @param voltage Voltage [0.1V]
+ * @param current Current [0.1A]
+ * @param fuel drawn mAh
+ * @param remaining battery remaining [%]
+ * @return encoded frame length, or 0 if the buffer is too small
+ */
+size_t crsf_build_telemetry_battery(uint8_t *buffer, size_t buffer_size,
+					 uint16_t voltage, uint16_t current, int fuel, uint8_t remaining);
 
 /**
  * Send telemetry GPS information
