@@ -3,7 +3,7 @@
 
 #define RXD2 2
 #define TXD2 1
-#define SBUS_BUFFER_SIZE 25
+#define CRSF_READ_BUFFER_SIZE 64
 #define BATTERY_TELEMETRY_INTERVAL_MS 1000
 
 uint8_t _rcs_buf[25] {};
